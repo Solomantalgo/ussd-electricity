@@ -1,0 +1,9 @@
+#Ignore Node.js dependencies in any folder
+**/node_modules/
+
+#Ignore local environment variables
+.env    
+
+#ignore operating system files
+.DS_Store
+Thumbs.db
