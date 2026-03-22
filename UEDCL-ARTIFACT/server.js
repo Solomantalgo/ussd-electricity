@@ -35,7 +35,7 @@ app.post('/ussd', (req, res) => {
 
     //if the text is empty that means user just dialed the code
     if (text === '') {
-        response = `CON welcome to the ussd electricity service
+        response = `CON welcome to the UEDCL electricity service
         1.By Electricity Token
         2.Check Balance
         `
@@ -97,6 +97,7 @@ app.get('/', (req, res) => {
 });
 
 //Route to view all transactions
+//TEST
 app.get('/transactions', (req, res) => {
     db.all('SELECT * FROM transactions', [], (err, rows) => {
         if(err){
@@ -129,6 +130,23 @@ app.get('/api/tokens/:meterNumber', (req, res) => {
             }
         }
     )
+});
+
+//Route to update token status after use
+app.post('/api/tokens/use', (req, res) => {
+    const {meterNumber, token} = req.body
+
+    db.run(
+        `UPDATE transactions SET status = 'Used' WHERE meter_number = ? AND token = ?`,
+    [meterNumber, token],
+    function(err){
+        if(err){
+            res.status(500).json({error:err.message});
+            return;
+        }
+     res.json({success:true, message:'Token marked as used'});
+    }
+ );
 });
 
 app.listen(port, () => {
