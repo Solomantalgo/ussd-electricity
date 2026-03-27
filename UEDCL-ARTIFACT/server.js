@@ -41,6 +41,8 @@ app.post('/ussd', (req, res) => {
         `
     }
 
+    
+
     //if the user selected 1
     else if (text === '1') {
         response = `CON Please enter your Meter number`;

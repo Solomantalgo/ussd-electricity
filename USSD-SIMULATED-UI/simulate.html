@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>USSD Simulator - Yaka Meter</title>
+    <style>
+        /*
+         * ==========================================
+         * 1. BASE PAGE STYLING
+         * ==========================================
+         * These styles center the phone on the browser screen and
+         * handle the background workspace look.
+         */
+        body, html {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f2f5; /* Light grey workspace background */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow-y: auto;        /* Allows scrolling if the laptop window is too short */
+            touch-action: manipulation; /* Optimizes for mobile tapping */
+        }
+
+        /*
+         * ==========================================
+         * 2. ADAPTIVE PHONE CONTAINER
+         * ==========================================
+         * This div simulates the physical chassis of the smartphone.
+         * It is designed to be responsive: it shows a frame on laptops
+         * but disappears to fill the screen on mobile devices.
+         */
+        #phone-container {
+            position: relative;
+            padding: 12px;
+            background: #111; /* Dark outer bezel */
+            border-radius: 55px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+            border: 1px solid #222;
+            transition: all 0.3s ease;
+            box-sizing: border-box;
+            margin: 20px auto;
+            flex-shrink: 0;
+        }
+
+        /*
+         * MOBILE VIEW:
+         * When screen width is < 500px, remove the frame and go full-screen.
+         */
+        @media (max-width: 500px) {
+            body, html { overflow: hidden; }
+            #phone-container {
+                padding: 0;
+                border-radius: 0;
+                width: 100vw;
+                height: 100vh;
+                border: none;
+                box-shadow: none;
+                margin: 0;
+            }
+            #phone {
+                border-radius: 0 !important;
+                width: 100% !important;
+                height: 100% !important;
+                border: none !important;
+            }
+            .side-button, #phone::after { display: none; } /* Hide physical hardware details */
+        }
+
+        /*
+         * LAPTOP VIEW:
+         * Scales the phone down to 85% if the screen height is too small (e.g. 13" laptops).
+         */
+        @media (max-height: 750px) and (min-width: 501px) {
+            #phone-container {
+                transform: scale(0.85);
+                margin: -40px auto;
+            }
+        }
+
+        /* Cosmetic Physical Buttons */
+        .side-button {
+            position: absolute;
+            background: #1a1a1a;
+            width: 3px;
+            border-radius: 2px;
+        }
+        .power { height: 60px; right: -3px; top: 140px; }
+        .volume-up { height: 40px; left: -3px; top: 120px; }
+        .volume-down { height: 40px; left: -3px; top: 170px; }
+
+        /*
+         * ==========================================
+         * 3. INTERNAL SCREEN DISPLAY
+         * ==========================================
+         * The area where the software simulation happens.
+         */
+        #phone {
+            width: 320px;
+            height: 640px;
+            background: #000;
+            border-radius: 40px;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            border: 2px solid #333;
+        }
+
+        /* Speaker Notch at the top */
+        #phone::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 150px;
+            height: 25px;
+            background: #000;
+            border-bottom-left-radius: 18px;
+            border-bottom-right-radius: 18px;
+            z-index: 110;
+        }
+
+        /* Global OS Status Bar (Time, Battery, Carrier) */
+        #phone-status-bar {
+            height: 35px;
+            background: transparent;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 25px;
+            font-size: 11px;
+            position: absolute;
+            top: 0;
+            width: 100%;
+            box-sizing: border-box;
+            z-index: 100;
+            padding-top: 5px;
+        }
+
+        /*
+         * ==========================================
+         * 4. APP LAYERS (LOCK, HOME, DIALER, USSD)
+         * ==========================================
+         */
+
+        /* LOCK SCREEN: The initial entry point */
+        #lock-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            padding-top: 80px;
+            z-index: 50;
+            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        #lock-screen.hidden { transform: translateY(-100%); } /* Slides up when unlocked */
+
+        .clock { color: white; font-size: 64px; font-weight: 200; margin-bottom: 5px; }
+        .date { color: #a2a2d0; font-size: 15px; margin-bottom: 40px; }
+        .lock-icon { font-size: 28px; color: rgba(255,255,255,0.4); margin-top: 60px; cursor: pointer; animation: pulse 2s infinite; }
+
+        @keyframes pulse { 0% { scale: 1; opacity: 0.4; } 50% { scale: 1.1; opacity: 0.7; } 100% { scale: 1; opacity: 0.4; } }
+
+        /* SUCCESS NOTIFICATION: SMS popup shown ONLY after a successful payment */
+        .notification {
+            position: absolute;
+            bottom: 70px;
+            left: 16px;
+            right: 16px;
+            background: rgba(28, 28, 30, 0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
+            padding: 18px;
+            color: white;
+            cursor: pointer;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.15);
+            z-index: 60;
+            display: none; /* Initially hidden */
+            transform: translateY(180px);
+            opacity: 0;
+        }
+
+        /* Class added via JS to animate the notification into view */
+        .notification.show { display: block; animation: slideUp 0.8s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards; }
+
+        @keyframes slideUp { to { transform: translateY(0); opacity: 1; } }
+
+        .notif-header { display: flex; align-items: center; font-size: 11px; text-transform: uppercase; font-weight: 700; opacity: 0.8; margin-bottom: 8px; }
+        .notif-dot { margin: 0 6px; font-size: 8px; }
+        .notif-body { font-size: 14px; line-height: 1.5; letter-spacing: 0.3px; }
+
+        /* HOME SCREEN: Grid of interactive icons */
+        #home-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: url('https://images.unsplash.com/photo-1557683316-973673baf926?ixlib=rb-1.2.1&auto=format&fit=crop&w=320&h=640&q=80') center/cover;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            padding-bottom: 40px;
+            z-index: 30;
+        }
+
+        .icon-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; width: 90%; margin-bottom: 20px; }
+        .icon-container { display: flex; flex-direction: column; align-items: center; cursor: pointer; }
+        .icon { width: 50px; height: 50px; border-radius: 12px; display: flex; align-items: center; justify-content: center; margin-bottom: 5px; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
+        .icon-label { color: white; font-size: 10px; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+
+        /* App icon colors and SVG positioning */
+        .phone-icon { background: #34c759; }
+        .phone-icon svg { width: 30px; height: 30px; fill: white; }
+        .sms-icon { background: #5856d6; }
+        .sms-icon svg { width: 30px; height: 30px; fill: white; }
+        .browser-icon { background: #007aff; }
+        .browser-icon svg { width: 30px; height: 30px; fill: white; }
+        .camera-icon { background: #8e8e93; }
+        .camera-icon svg { width: 30px; height: 30px; fill: white; }
+
+        /* DIALER SCREEN: Dark mode phone dialer */
+        #dialer-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #1c1c1e; /* AMOLED Black */
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            padding-bottom: 30px;
+            z-index: 40;
+        }
+
+        #dial-display { flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: white; padding-top: 40px; }
+        #dialed-number { font-size: 38px; font-weight: 400; min-height: 50px; letter-spacing: 1px; margin-bottom: 5px; color: #19ffa1; }
+        #dial-label { font-size: 14px; color: #8e8e93; letter-spacing: 0.5px; }
+
+        /* Tappable Dialer Keypad */
+        .dial-keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; width: 80%; margin-bottom: 30px; }
+        .dial-key { background: rgba(255,255,255,0.1); color: white; border: none; border-radius: 50%; width: 65px; height: 65px; font-size: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.2s; }
+        .dial-key:active { background: rgba(255,255,255,0.25); }
+        .dial-key span { font-size: 10px; display: block; margin-top: -4px; opacity: 0.6; }
+
+        .call-btn-container { grid-column: 2; display: flex; justify-content: center; }
+        .call-btn { background: #008080; color: white; border: none; border-radius: 50%; width: 65px; height: 65px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 15px rgba(0, 128, 128, 0.3); }
+        .call-btn svg { width: 32px; height: 32px; fill: white; }
+
+        /* USSD OVERLAY: Modern "Bottom Sheet" style dialog */
+        #ussd-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end; /* Align dialog to the bottom */
+            z-index: 100;
+        }
+
+        #ussd-dialog {
+            width: 100%;
+            background: #1c1c1e; /* Dark theme dialog */
+            padding: 30px 20px;
+            border-top-left-radius: 30px;
+            border-top-right-radius: 30px;
+            box-shadow: 0 -10px 40px rgba(0,0,0,0.6);
+            box-sizing: border-box;
+            color: white;
+            animation: slideUpDialog 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+
+        @keyframes slideUpDialog { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+        #ussd-header { font-size: 14px; color: #8e8e93; margin-bottom: 20px; font-weight: 500; letter-spacing: 0.5px; }
+        #screen { color: #ffffff; margin-bottom: 30px; white-space: pre-wrap; font-size: 17px; line-height: 1.6; font-weight: 400; }
+        #screen h2 { font-size: 20px; margin: 0 0 12px 0; font-weight: 600; }
+
+        /* Modern Teal Input Box */
+        #ussd-input-container { border: 2px solid #19ffa1; border-radius: 14px; padding: 2px; margin-bottom: 30px; background: rgba(25, 255, 161, 0.05); }
+        #reply { width: 100%; padding: 14px 16px; box-sizing: border-box; border: none; background: transparent; outline: none; font-size: 20px; color: white; text-align: left; }
+
+        .ussd-actions { display: flex; justify-content: space-between; align-items: center; padding: 0 10px; }
+        .ussd-btn { background: none; border: none; color: #8e8e93; font-weight: 600; cursor: pointer; padding: 12px; font-size: 18px; }
+        .ussd-btn.send { color: #19ffa1; }
+
+        /* LOADING OVERLAY: AMOLED black with teal spinner */
+        #loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 200;
+            color: white;
+        }
+
+        .spinner { width: 40px; height: 40px; border: 4px solid rgba(25, 255, 161, 0.1); border-top: 4px solid #19ffa1; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 15px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #loading-text { font-size: 20px; letter-spacing: 1px; margin-bottom: 20px; color: #ccc; }
+        .loading-detail { font-size: 16px; color: #888; margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <!--
+      - HTML STRUCTURE
+      - Organized in layers: Container > Chassis > Internal Layers (Lock, Home, Dialer, Dialogs)
+    -->
+    <div id="phone-container">
+        <!-- Physical side button elements -->
+        <div class="side-button volume-up"></div>
+        <div class="side-button volume-down"></div>
+        <div class="side-button power"></div>
+
+        <div id="phone">
+            <!-- Global Status Bar (Always on top) -->
+            <div id="phone-status-bar">
+                <span id="status-time">19:24</span>
+                <span style="flex-grow: 1; text-align: center; opacity: 0.8; font-size: 9px; padding-right: 20px;">MTN UG</span>
+                <span>📶 78% 🔋</span>
+            </div>
+
+            <!-- LAYER 1: LOCK SCREEN -->
+            <div id="lock-screen">
+                <div class="clock">19:24</div>
+                <div class="date">Thursday, 26 March 2026</div>
+                <div class="lock-icon" onclick="unlockPhone()">🔒</div>
+
+                <!--
+                  - LAYER 1.1: NOTIFICATION
+                  - Only shown via JS after a successful payment cycle
+                -->
+                <div id="sms-notification" class="notification" onclick="unlockPhone()">
+                    <div class="notif-header">
+                        <span>UMEME</span>
+                        <span class="notif-dot">•</span>
+                        <span>now</span>
+                    </div>
+                    <div class="notif-body" id="notif-body">
+                        Your Yaka token: 4582 1903 7485 6219 87. Units: 10
+                    </div>
+                </div>
+            </div>
+
+            <!-- LAYER 2: HOME SCREEN -->
+            <div id="home-screen">
+                <div class="icon-grid">
+                    <!-- Opening the Phone app leads to the Dialer -->
+                    <div class="icon-container" onclick="openDialer()">
+                        <div class="icon phone-icon">
+                            <svg viewBox="0 0 24 24"><path d="M6.62,10.79C8.06,13.62 10.38,15.94 13.21,17.38L15.41,15.18C15.69,14.9 16.08,14.82 16.43,14.93C17.55,15.3 18.75,15.5 20,15.5A1,1 0 0,1 21,16.5V20A1,1 0 0,1 20,21A17,17 0 0,1 3,4A1,1 0 0,1 4,3H7.5A1,1 0 0,1 8.5,4C8.5,5.25 8.7,6.45 9.07,7.57C9.18,7.92 9.1,8.31 8.82,8.59L6.62,10.79Z" /></svg>
+                        </div>
+                        <div class="icon-label">Phone</div>
+                    </div>
+                    <!-- Placeholder icons for realistic UI -->
+                    <div class="icon-container"><div class="icon sms-icon"><svg viewBox="0 0 24 24"><path d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M20,16H5.17L4,17.17V4H20V16Z" /></svg></div><div class="icon-label">Messages</div></div>
+                    <div class="icon-container"><div class="icon browser-icon"><svg viewBox="0 0 24 24"><path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6Z" /></svg></div><div class="icon-label">Safari</div></div>
+                    <div class="icon-container"><div class="icon camera-icon"><svg viewBox="0 0 24 24"><path d="M4,4H7L9,2H15L17,4H20A2,2 0 0,1 22,6V18A2,2 0 0,1 20,20H4A2,2 0 0,1 2,18V6A2,2 0 0,1 4,4M12,7A5,5 0 1,0 17,12A5,5 0 0,0 12,7M12,9A3,3 0 1,1 9,12A3,3 0 0,1 12,9Z" /></svg></div><div class="icon-label">Camera</div></div>
+                </div>
+            </div>
+
+            <!-- LAYER 3: DIALER SCREEN -->
+            <div id="dialer-screen">
+                <div id="dial-display"><div id="dialed-number"></div><div id="dial-label">USSD</div></div>
+                <div class="dial-keypad">
+                    <!-- Keypad digits -->
+                    <button class="dial-key" onclick="dialPress('1')"><div class="key-content">1<span>&nbsp;</span></div></button>
+                    <button class="dial-key" onclick="dialPress('2')"><div class="key-content">2<span>ABC</span></div></button>
+                    <button class="dial-key" onclick="dialPress('3')"><div class="key-content">3<span>DEF</span></div></button>
+                    <button class="dial-key" onclick="dialPress('4')"><div class="key-content">4<span>GHI</span></div></button>
+                    <button class="dial-key" onclick="dialPress('5')"><div class="key-content">5<span>JKL</span></div></button>
+                    <button class="dial-key" onclick="dialPress('6')"><div class="key-content">6<span>MNO</span></div></button>
+                    <button class="dial-key" onclick="dialPress('7')"><div class="key-content">7<span>PQRS</span></div></button>
+                    <button class="dial-key" onclick="dialPress('8')"><div class="key-content">8<span>TUV</span></div></button>
+                    <button class="dial-key" onclick="dialPress('9')"><div class="key-content">9<span>WXYZ</span></div></button>
+                    <button class="dial-key" onclick="dialPress('*')"><div class="key-content">*<span>&nbsp;</span></div></button>
+                    <button class="dial-key" onclick="dialPress('0')"><div class="key-content">0<span>+</span></div></button>
+                    <button class="dial-key" onclick="dialPress('#')"><div class="key-content">#<span>&nbsp;</span></div></button>
+                    <button class="dial-key" onclick="dialBackspace()" style="background:none;"><div class="key-content">⌫</div></button>
+                    <div class="call-btn-container">
+                        <button class="call-btn" onclick="initiateCall()">
+                            <svg viewBox="0 0 24 24"><path d="M6.62,10.79C8.06,13.62 10.38,15.94 13.21,17.38L15.41,15.18C15.69,14.9 16.08,14.82 16.43,14.93C17.55,15.3 18.75,15.5 20,15.5A1,1 0 0,1 21,16.5V20A1,1 0 0,1 20,21A17,17 0 0,1 3,4A1,1 0 0,1 4,3H7.5A1,1 0 0,1 8.5,4C8.5,5.25 8.7,6.45 9.07,7.57C9.18,7.92 9.1,8.31 8.82,8.59L6.62,10.79Z" /></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- LAYER 4: LOADING OVERLAY (Shows for every network request) -->
+            <div id="loading-overlay">
+                <div class="spinner"></div>
+                <span id="loading-text">USSD code running...</span>
+                <div id="loading-amount" class="loading-detail"></div>
+                <div id="loading-meter" class="loading-detail"></div>
+            </div>
+
+            <!-- LAYER 5: USSD DIALOG POPUP -->
+            <div id="ussd-overlay">
+                <div id="ussd-dialog">
+                    <div id="ussd-header">USSD — *384*YourCode#</div>
+                    <div id="screen">
+                        <!-- Content here is dynamically replaced by JavaScript -->
+                        <h2>Welcome to Yaka Meter</h2>
+                        <hr style="border: 0.5px solid rgba(255,255,255,0.1); margin-bottom: 25px;">
+                        1. Buy units
+                        2. Check balance
+                        3. Exit
+                    </div>
+                    <div id="ussd-input-container">
+                        <input type="text" id="reply" placeholder="" autofocus>
+                    </div>
+                    <div class="ussd-actions">
+                        <button id="cancel-btn" class="ussd-btn" onclick="lockPhone()">Cancel</button>
+                        <button class="ussd-btn send" id="send-btn" onclick="send()">Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /*
+         * ==========================================
+         * JAVASCRIPT SIMULATION LOGIC
+         * ==========================================
+         */
+
+        // STATE VARIABLES
+        let currentText = ""; // Tracks the path of USSD input (e.g., "1*10000")
+        let phoneNumber = "256770000000"; // Mock identity
+        let sessionId = "sim_" + Math.random().toString(36).substr(2, 9); // Persistent session ID
+
+        // DOM Element Cache
+        const screen = document.getElementById("screen");
+        const replyInput = document.getElementById("reply");
+        const sendBtn = document.getElementById("send-btn");
+        const cancelBtn = document.getElementById("cancel-btn");
+        const ussdOverlay = document.getElementById("ussd-overlay");
+        const lockScreen = document.getElementById("lock-screen");
+        const homeScreen = document.getElementById("home-screen");
+        const dialerScreen = document.getElementById("dialer-screen");
+        const loadingOverlay = document.getElementById("loading-overlay");
+        const loadingText = document.getElementById("loading-text");
+        const loadingAmount = document.getElementById("loading-amount");
+        const loadingMeter = document.getElementById("loading-meter");
+        const dialedNumberDiv = document.getElementById("dialed-number");
+        const dialLabel = document.getElementById("dial-label");
+        const smsNotif = document.getElementById("sms-notification");
+
+        /**
+         * Transitions from Lock Screen to Home Screen
+         */
+        function unlockPhone() {
+            lockScreen.classList.add('hidden');
+            homeScreen.style.display = 'flex';
+        }
+
+        /**
+         * Transitions from Home Screen to Phone Dialer
+         */
+        function openDialer() {
+            homeScreen.style.display = 'none';
+            dialerScreen.style.display = 'flex';
+        }
+
+        /**
+         * Completely resets simulator and returns to Lock Screen
+         */
+        function lockPhone() {
+            lockScreen.classList.remove('hidden');
+            setTimeout(() => {
+                ussdOverlay.style.display = 'none';
+                homeScreen.style.display = 'none';
+                dialerScreen.style.display = 'none';
+                reset();
+            }, 600);
+        }
+
+        // Logic for the physical keypad buttons in the Dialer
+        function dialPress(val) { dialedNumberDiv.textContent += val; }
+        function dialBackspace() { dialedNumberDiv.textContent = dialedNumberDiv.textContent.slice(0, -1); }
+
+        /**
+         * Handles the green "Call" button press to start USSD session
+         */
+        async function initiateCall() {
+            const code = dialedNumberDiv.textContent.trim();
+            if (code === "") return;
+            dialLabel.textContent = "Dialling USSD...";
+            await new Promise(resolve => setTimeout(resolve, 800)); // Artificial realism delay
+            dialerScreen.style.display = 'none';
+            send(code); // Trigger the first server POST
+        }
+
+        // Support for using your actual keyboard Enter/Escape keys in browser
+        document.addEventListener('keydown', (e) => {
+            if (ussdOverlay.style.display === 'flex') {
+                if (e.key === 'Enter') send();
+                else if (e.key === 'Escape') lockPhone();
+            }
+        });
+
+        /**
+         * CORE COMMUNICATION FUNCTION
+         * Interacts with the Node.js backend (/ussd endpoint)
+         */
+        async function send(initialCode) {
+            let userInput = "";
+            if (initialCode) {
+                // Handling first dial logic
+                if (initialCode === "*165#") currentText = "";
+                else currentText = initialCode;
+            } else {
+                // Handling menu responses (Send button in popup)
+                userInput = replyInput.value.trim();
+                if (userInput === "" && currentText === "") return;
+                currentText = currentText === "" ? userInput : currentText + "*" + userInput;
+            }
+
+            // UI: Show "Processing payment..." if user just entered meter and amount
+            const pathParts = currentText.split('*');
+            if (pathParts.length === 3 && currentText.startsWith('1*')) {
+                loadingText.textContent = "Processing payment...";
+                loadingAmount.textContent = `UGX ${Number(pathParts[1]).toLocaleString()}`;
+                loadingMeter.textContent = `Meter: ${pathParts[2]}`;
+                loadingAmount.style.display = loadingMeter.style.display = 'block';
+            } else {
+                loadingText.textContent = "USSD code running...";
+                loadingAmount.style.display = loadingMeter.style.display = 'none';
+            }
+
+            loadingOverlay.style.display = 'flex'; // Show black loading screen
+
+            // Packaging data for server (Matches Africa's Talking format)
+            const formData = new URLSearchParams({
+                sessionId, serviceCode: "*165#", phoneNumber, text: currentText
+            });
+
+            try {
+                await new Promise(resolve => setTimeout(resolve, 1500)); // Artificial latency
+                const response = await fetch("/ussd", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: formData
+                });
+
+                let data = await response.text();
+                loadingOverlay.style.display = 'none';
+                ussdOverlay.style.display = 'flex';
+                setTimeout(() => replyInput.focus(), 100);
+
+                if (data.startsWith("CON ")) {
+                    // CONTINUE SESSION: Show new menu
+                    let content = data.substring(4);
+                    if (content.toLowerCase().includes("welcome")) {
+                        let lines = content.split('\n');
+                        screen.innerHTML = `<h2>${lines[0]}</h2><hr style="border: 0.5px solid rgba(255,255,255,0.1); margin-bottom: 25px;">${lines.slice(1).join('\n')}`;
+                    } else {
+                        screen.style.color = "#ffffff";
+                        screen.innerHTML = content;
+                    }
+                } else if (data.startsWith("END ")) {
+                    // TERMINATE SESSION: Show final confirmation
+                    let content = data.substring(4);
+                    document.getElementById("ussd-input-container").style.display = "none";
+                    if (content.toLowerCase().includes("confirmed")) {
+                        screen.style.color = "#19ffa1"; // Teal for success
+                        screen.style.fontWeight = "600";
+                        cancelBtn.style.display = "none";
+                        document.querySelector('.ussd-actions').style.justifyContent = "center";
+                        sendBtn.innerHTML = "OK";
+
+                        // Payment complete! Show the SMS notification on next lock screen visit
+                        smsNotif.classList.add('show');
+                    } else {
+                        sendBtn.innerHTML = "Exit";
+                    }
+                    screen.innerHTML = content;
+                    sendBtn.onclick = lockPhone;
+                }
+                replyInput.value = ""; // Clear input for next interaction
+            } catch (error) {
+                loadingOverlay.style.display = 'none';
+                console.error("Error:", error);
+                screen.innerHTML = "Network Error.";
+                ussdOverlay.style.display = 'flex';
+            }
+        }
+
+        /**
+         * Cleans up the USSD state and UI elements
+         */
+        function reset() {
+            currentText = "";
+            sessionId = "sim_" + Math.random().toString(36).substr(2, 9);
+            screen.style.color = "#ffffff";
+            screen.style.fontWeight = "400";
+            cancelBtn.style.display = "block";
+            document.querySelector('.ussd-actions').style.justifyContent = "space-between";
+            screen.innerHTML = `<h2>Welcome to Yaka Meter</h2><hr style="border: 0.5px solid rgba(255,255,255,0.1); margin-bottom: 25px;">1. Buy units\n2. Check balance\n3. Exit`;
+            replyInput.value = "";
+            document.getElementById("ussd-input-container").style.display = "block";
+            dialedNumberDiv.textContent = "";
+            dialLabel.textContent = "USSD";
+            sendBtn.innerHTML = "Send";
+            sendBtn.onclick = () => send();
+        }
+
+        /**
+         * Updates the real-time clock displayed on the phone
+         */
+        function updateTime() {
+            const now = new Date();
+            const timeStr = now.getHours().toString().padStart(2, '0') + ":" + now.getMinutes().toString().padStart(2, '0');
+            document.getElementById('status-time').textContent = timeStr;
+            const clockEl = document.querySelector('.clock');
+            if (clockEl) clockEl.textContent = timeStr;
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+    </script>
+</body>
+</html>
