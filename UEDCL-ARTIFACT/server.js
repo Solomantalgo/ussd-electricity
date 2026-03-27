@@ -2,6 +2,7 @@ const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const app = express();
 const port = 3000;
+const path = require('path');
 
 //connect the database
 const db = new sqlite3.Database('./database.sqlite', (err) => {
@@ -24,6 +25,14 @@ db.run(`
         status TEXT NOT NULL
     )
 `)
+
+//serve the static file
+app.use(express.static(path.join('../USSD-SIMULATED-UI')))
+
+//Route for the simulated server
+app.get('/simulate', (req, res) => {
+    res.sendFile(path.join(__dirname, '../USSD-SIMULATED-UI/simulate.html'))
+})
 
 app.use(express.urlencoded({ extended: false }))
 
@@ -48,14 +57,18 @@ app.post('/ussd', (req, res) => {
         response = `CON Please enter your Meter number`;
     }
 
-    //if the user entered 
+
+    //if the user entered 1 and then meter number
     else if (text.startsWith('1*')) {
 
-        //get the mock up token
-        let generatedToken = Math.random().toString().slice(2).padEnd(20, '0');
+        if (text.split('*').length === 2){
+        response = `CON Please enter the amount you want to buy`;
+        } else {
+             //get the mock up token
+        let generatedToken =Math.floor(Math.random()* 1e20).toString().padStart(20, '0');
 
         //user amount 
-        let amount = 20;
+        let amount = text.split('*')[2];
 
         let status = 'Unused';
         //get the meter number
@@ -76,6 +89,7 @@ app.post('/ussd', (req, res) => {
 
         response = `END Thank you generating token for meter number ${meterNumber}. Token is ${generatedToken}
         You will receive an sms shortly`;
+        }
     }
 
     //if the user selected 2
@@ -85,7 +99,7 @@ app.post('/ussd', (req, res) => {
 
     //if invalid option
     else {
-        response = 'END Invalid option'
+        response = 'END Invalid optiom'
     }
 
     //send the response back to the telecom
