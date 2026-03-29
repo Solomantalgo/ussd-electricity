@@ -26,6 +26,8 @@ db.run(`
     )
 `)
 
+app.use(express.urlencoded({ extended: false }))
+
 //serve the static file
 app.use(express.static(path.join('../USSD-SIMULATED-UI')))
 
@@ -34,7 +36,6 @@ app.get('/simulate', (req, res) => {
     res.sendFile(path.join(__dirname, '../USSD-SIMULATED-UI/simulate.html'))
 })
 
-app.use(express.urlencoded({ extended: false }))
 
 app.post('/ussd', (req, res) => {
     // Read the data sent by the telecom
@@ -45,7 +46,7 @@ app.post('/ussd', (req, res) => {
     //if the text is empty that means user just dialed the code
     if (text === '') {
         response = `CON welcome to the UEDCL electricity service
-        1.By Electricity Token
+        1.Buy Electricity Token
         2.Check Balance
         `
     }
@@ -69,6 +70,9 @@ app.post('/ussd', (req, res) => {
 
         //user amount 
         let amount = text.split('*')[2];
+        if(isNaN(amount) || Number(amount) <= 0){
+            response = 'END Invalid amount. Please enter a valid number.'
+        } else {
 
         let status = 'Unused';
         //get the meter number
@@ -89,17 +93,18 @@ app.post('/ussd', (req, res) => {
 
         response = `END Thank you generating token for meter number ${meterNumber}. Token is ${generatedToken}
         You will receive an sms shortly`;
-        }
+        } 
+    }
     }
 
     //if the user selected 2
     else if (text === '2') {
-        response = 'END your balance is $50'
+        response = 'END your balance is UGX 50,000'
     }
 
     //if invalid option
     else {
-        response = 'END Invalid optiom'
+        response = 'END Invalid option'
     }
 
     //send the response back to the telecom
@@ -130,7 +135,7 @@ app.get('/api/tokens/:meterNumber', (req, res) => {
 
     //Search the database for the token 
     db.get(
-        `SELECT token FROM transactions WHERE meter_number = ? AND status = 'Unused' ORDER BY ID ASC LIMIT 1`,
+        `SELECT token, amount FROM transactions WHERE meter_number = ? AND status = 'Unused' ORDER BY ID ASC LIMIT 1`,
         [meterNumber],
         (err, row) => {
             if(err){
@@ -138,8 +143,11 @@ app.get('/api/tokens/:meterNumber', (req, res) => {
                 return;
             }
             if(row){
+                //Generate units
+             const units = Math.floor(row.amount/1000)
+
                 //if token is found send it to the Esp32
-                res.json({token:row.token, hasNewToken:true});
+                res.json({token:row.token, hasNewToken:true, units:units});
             } else {
                 //if no token found, tell the esp32 to keep waiting
                 res.json({hasNewToken:false})
@@ -147,6 +155,25 @@ app.get('/api/tokens/:meterNumber', (req, res) => {
         }
     )
 });
+
+//Route to activate tokens
+app.post('/api/tokens/activate', (req, res) =>{
+    const {meterNumber, token} = req.body;
+
+    db.run(
+        `UPDATE transactions set status = 'Active'  where meter_number = ? AND token = ? `,
+        [meterNumber, token],
+        function(err){
+            if(err){
+                res.status(500).json({error:err.message})
+                return;
+            }
+            res.json({success:true, message:'token activated successfully'})
+        }
+    )
+
+    
+})
 
 //Route to update token status after use
 app.post('/api/tokens/use', (req, res) => {
